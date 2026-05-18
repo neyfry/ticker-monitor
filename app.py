@@ -13,6 +13,8 @@ import yfinance as yf
 import numpy as np
 import json
 import os
+import requests
+import pandas as pd
 from datetime import datetime
 import plotly.graph_objects as go
 
@@ -134,21 +136,44 @@ def compute_rsi(close, period=14):
     return round(float(rsi.iloc[-1]), 1)
 
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json",
+    "Accept-Language": "en-US,en;q=0.9",
+}
+
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_ticker(symbol: str) -> dict:
     try:
-        t = yf.Ticker(symbol)
-        info = t.info
-        hist = t.history(period="1y")
+        # histórico 1 año via API directa
+        url_chart = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1y"
+        r = requests.get(url_chart, headers=HEADERS, timeout=10)
+        r.raise_for_status()
+        data = r.json()["chart"]["result"][0]
 
-        price  = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")
-        low52  = info.get("fiftyTwoWeekLow")
-        high52 = info.get("fiftyTwoWeekHigh")
-        name   = info.get("shortName") or info.get("longName") or symbol
+        closes = data["indicators"]["quote"][0]["close"]
+        opens  = data["indicators"]["quote"][0].get("open", closes)
+        highs  = data["indicators"]["quote"][0].get("high", closes)
+        lows   = data["indicators"]["quote"][0].get("low", closes)
+        timestamps = data["timestamp"]
 
+        # limpiar Nones
+        rows = [(t, o, h, l, c) for t, o, h, l, c in zip(timestamps, opens, highs, lows, closes)
+                if c is not None]
+
+        closes_clean = [r[4] for r in rows]
+        price  = closes_clean[-1] if closes_clean else None
+
+        meta   = data["meta"]
+        high52 = meta.get("fiftyTwoWeekHigh")
+        low52  = meta.get("fiftyTwoWeekLow")
+        name   = meta.get("shortName") or meta.get("longName") or symbol
+
+        # RSI
         rsi = None
-        if len(hist) > 15:
-            rsi = compute_rsi(hist["Close"])
+        if len(closes_clean) > 15:
+            s = pd.Series(closes_clean)
+            rsi = compute_rsi(s)
 
         pct_from_high = None
         range_pct = None
@@ -158,7 +183,16 @@ def fetch_ticker(symbol: str) -> dict:
             range_pct = max(0.0, min(100.0, (price - low52) / (high52 - low52) * 100))
 
         # últimos 14 días para la gráfica
-        hist14 = hist.tail(14)[["Open", "High", "Low", "Close"]].copy() if len(hist) > 0 else None
+        hist14 = None
+        if len(rows) >= 2:
+            tail = rows[-14:]
+            idx  = pd.to_datetime([r[0] for r in tail], unit="s")
+            hist14 = pd.DataFrame({
+                "Open":  [r[1] for r in tail],
+                "High":  [r[2] for r in tail],
+                "Low":   [r[3] for r in tail],
+                "Close": [r[4] for r in tail],
+            }, index=idx)
 
         return dict(symbol=symbol.upper(), name=name, price=price,
                     low52=low52, high52=high52, rsi=rsi,
