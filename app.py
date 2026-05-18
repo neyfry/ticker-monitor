@@ -1,9 +1,12 @@
-from curl_cffi import requests as _cffi_requests
-_orig_request = _cffi_requests.Session.request
-def _patched_request(self, method, url, **kwargs):
-    kwargs.setdefault("verify", False)
-    return _orig_request(self, method, url, **kwargs)
-_cffi_requests.Session.request = _patched_request
+try:
+    from curl_cffi import requests as _cffi_requests
+    _orig_request = _cffi_requests.Session.request
+    def _patched_request(self, method, url, **kwargs):
+        kwargs.setdefault("verify", False)
+        return _orig_request(self, method, url, **kwargs)
+    _cffi_requests.Session.request = _patched_request
+except ImportError:
+    pass
 
 import streamlit as st
 import yfinance as yf
