@@ -169,6 +169,31 @@ def fetch_ticker(symbol: str) -> dict:
         low52  = meta.get("fiftyTwoWeekLow")
         name   = meta.get("shortName") or meta.get("longName") or symbol
 
+        # precio extendido (pre/post market) via quote API
+        ext_price = None
+        market_state = None
+        price_label = "Precio"
+        try:
+            url_quote = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbol}"
+            rq = requests.get(url_quote, headers=HEADERS, timeout=8)
+            if rq.status_code == 200:
+                qdata = rq.json().get("quoteResponse", {}).get("result", [{}])[0]
+                market_state = qdata.get("marketState", "")
+                if market_state == "POST":
+                    ext_price = qdata.get("postMarketPrice")
+                    price_label = "After Hours"
+                elif market_state == "PRE":
+                    ext_price = qdata.get("preMarketPrice")
+                    price_label = "Pre-Market"
+                elif market_state == "REGULAR":
+                    ext_price = qdata.get("regularMarketPrice")
+                    price_label = "Precio"
+        except Exception:
+            pass
+
+        if ext_price:
+            price = ext_price
+
         # RSI
         rsi = None
         if len(closes_clean) > 15:
@@ -195,6 +220,7 @@ def fetch_ticker(symbol: str) -> dict:
             }, index=idx)
 
         return dict(symbol=symbol.upper(), name=name, price=price,
+                    price_label=price_label, market_state=market_state,
                     low52=low52, high52=high52, rsi=rsi,
                     pct_from_high=pct_from_high, range_pct=range_pct,
                     hist14=hist14, error=None)
@@ -227,7 +253,15 @@ def render_card(d: dict, high_thr: float, rsi_thr: float) -> str:
     pulled_back = d.get("pct_from_high") is not None and d["pct_from_high"] <= -high_thr
     oversold    = d.get("rsi") is not None and d["rsi"] < rsi_thr
 
-    price_s = f"${d['price']:,.2f}" if d["price"] else "—"
+    price_label  = d.get("price_label", "Precio")
+    market_state = d.get("market_state", "")
+    market_badge = ""
+    if market_state == "POST":
+        market_badge = ' <span style="font-size:10px;background:rgba(255,165,0,0.3);padding:1px 5px;border-radius:4px;">AH</span>'
+    elif market_state == "PRE":
+        market_badge = ' <span style="font-size:10px;background:rgba(100,200,255,0.3);padding:1px 5px;border-radius:4px;">PRE</span>'
+
+    price_s = f"${d['price']:,.2f}{market_badge}" if d["price"] else "—"
     low_s   = f"${d['low52']:,.2f}"  if d["low52"]  else "—"
     high_s  = f"${d['high52']:,.2f}" if d["high52"] else "—"
     rsi_s   = str(d["rsi"]) if d["rsi"] is not None else "—"
