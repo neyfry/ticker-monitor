@@ -9,7 +9,6 @@ except ImportError:
     pass
 
 import streamlit as st
-import yfinance as yf
 import numpy as np
 import json
 import os
